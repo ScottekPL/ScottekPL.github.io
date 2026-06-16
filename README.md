@@ -1,1 +1,0 @@
-# ScottekPL.github.io

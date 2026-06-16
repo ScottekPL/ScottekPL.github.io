@@ -1,0 +1,2390 @@
+<!doctype html>
+<!--
+  Interaktywna mapa edukacyjna: panowanie Kazimierza III Wielkiego, 1333-1370
+
+  Uruchomienie:
+  - Otwórz ten plik w przeglądarce albo uruchom prosty serwer w katalogu projektu:
+    python3 -m http.server 8080
+    i przejdź do http://127.0.0.1:8080/
+
+  Osadzenie w innej stronie:
+  <iframe
+    src="index.html"
+    width="100%"
+    height="700"
+    style="border:0;"
+    allowfullscreen>
+  </iframe>
+
+  Edycja danych:
+  - Nowe punkty dodawaj w sekcji historicalEvents. Współrzędne wpisuj jako [szerokość, długość].
+  - Opisy, źródła i metadane znajdują się bezpośrednio w obiektach wydarzeń.
+  - Rok widoczności ustawiaj przez yearStart i yearEnd. Wydarzenia jednoroczne mają ten sam rok.
+  - Warstwę przypisuj przez pole layer, zgodne z kluczami w layersConfig.
+  - Granice i zasięgi ziem zmieniaj w bordersByYear oraz territories. GeoJSON używa kolejności [długość, szerokość].
+  - Nową ikonę lub warstwę dodasz w layersConfig; interfejs panelu warstw tworzy się automatycznie.
+
+  Uwaga merytoryczna:
+  Przebieg historycznych granic ma charakter rekonstrukcyjny i może różnić się w zależności od opracowania.
+  Uproszczone wielokąty służą do nauki i prezentacji, nie do precyzyjnej rekonstrukcji geodezyjnej.
+-->
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Mapa panowania Kazimierza III Wielkiego</title>
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIINfQhKbbdMzE2m/B8A0Fq3gF3p1a3J2tQ="
+    crossorigin="">
+  <style>
+    :root {
+      --paper: #f6efd9;
+      --paper-strong: #efe1bd;
+      --ink: #2f271f;
+      --muted: #6c604f;
+      --navy: #173a5e;
+      --red: #9d2f27;
+      --gold: #c39b38;
+      --green: #47734c;
+      --blue: #2f6f99;
+      --purple: #74508a;
+      --shadow: 0 12px 30px rgba(47, 39, 31, 0.22);
+      --panel-border: rgba(95, 65, 35, 0.24);
+      --control-size: 34px;
+      font-family: ui-serif, Georgia, "Times New Roman", serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    [hidden] {
+      display: none !important;
+    }
+
+    html,
+    body {
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #1d272b;
+      color: var(--ink);
+    }
+
+    body {
+      font-size: 15px;
+    }
+
+    button,
+    input,
+    label {
+      font: inherit;
+    }
+
+    button {
+      border: 1px solid rgba(74, 47, 24, 0.24);
+      border-radius: 6px;
+      background: linear-gradient(#fff7df, #ecd9a7);
+      color: var(--ink);
+      cursor: pointer;
+      min-height: var(--control-size);
+      transition: transform 140ms ease, box-shadow 140ms ease, background 140ms ease;
+    }
+
+    button:hover {
+      background: linear-gradient(#fffbe9, #f0dfb5);
+      box-shadow: 0 4px 12px rgba(47, 39, 31, 0.16);
+    }
+
+    button:active {
+      transform: translateY(1px);
+    }
+
+    button:focus-visible,
+    input:focus-visible,
+    summary:focus-visible {
+      outline: 3px solid rgba(47, 111, 153, 0.5);
+      outline-offset: 2px;
+    }
+
+    .app-shell {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      min-height: 480px;
+      overflow: hidden;
+    }
+
+    #map {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+      background: #d8d1ba;
+    }
+
+    .leaflet-container {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      touch-action: none;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    /* Critical Leaflet fallback styles.
+       They keep tiles positioned correctly even if the CDN stylesheet is blocked. */
+    .leaflet-pane,
+    .leaflet-tile,
+    .leaflet-marker-icon,
+    .leaflet-marker-shadow,
+    .leaflet-tile-container,
+    .leaflet-pane > svg,
+    .leaflet-pane > canvas,
+    .leaflet-zoom-box,
+    .leaflet-image-layer,
+    .leaflet-layer {
+      position: absolute;
+      left: 0;
+      top: 0;
+    }
+
+    .leaflet-map-pane,
+    .leaflet-tile,
+    .leaflet-marker-icon,
+    .leaflet-marker-shadow,
+    .leaflet-pane > svg,
+    .leaflet-pane > canvas {
+      user-select: none;
+    }
+
+    .leaflet-tile {
+      width: 256px;
+      height: 256px;
+      border: 0;
+      max-width: none !important;
+      max-height: none !important;
+    }
+
+    .leaflet-image-layer {
+      border: 0;
+      max-width: none !important;
+      max-height: none !important;
+    }
+
+    .leaflet-zoom-animated {
+      transform-origin: 0 0;
+    }
+
+    .leaflet-tile-pane {
+      z-index: 200;
+    }
+
+    .leaflet-overlay-pane {
+      z-index: 400;
+    }
+
+    .leaflet-marker-pane {
+      z-index: 600;
+    }
+
+    .leaflet-tooltip-pane {
+      z-index: 650;
+    }
+
+    .leaflet-popup-pane {
+      z-index: 700;
+    }
+
+    .leaflet-control {
+      position: relative;
+      z-index: 800;
+      pointer-events: auto;
+      float: left;
+      clear: both;
+    }
+
+    .leaflet-top,
+    .leaflet-bottom {
+      position: absolute;
+      z-index: 1000;
+      pointer-events: none;
+    }
+
+    .leaflet-top {
+      top: 0;
+    }
+
+    .leaflet-bottom {
+      bottom: 0;
+    }
+
+    .leaflet-left {
+      left: 0;
+    }
+
+    .leaflet-right {
+      right: 0;
+    }
+
+    .leaflet-left .leaflet-control {
+      margin-left: 10px;
+    }
+
+    .leaflet-top .leaflet-control {
+      margin-top: 10px;
+    }
+
+    .leaflet-control-zoom a {
+      display: block;
+      width: 30px;
+      height: 30px;
+      line-height: 30px;
+      text-align: center;
+      text-decoration: none;
+      background: rgba(255, 248, 231, 0.96);
+      color: var(--ink);
+      border-bottom: 1px solid rgba(82, 53, 27, 0.18);
+    }
+
+    .leaflet-control-zoom {
+      border-radius: 6px;
+      overflow: hidden;
+      box-shadow: 0 4px 14px rgba(47, 39, 31, 0.18);
+    }
+
+    .leaflet-interactive {
+      cursor: pointer;
+    }
+
+    #map::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 250;
+      background:
+        radial-gradient(circle at 12% 18%, rgba(255, 246, 203, 0.24), transparent 30%),
+        linear-gradient(90deg, rgba(122, 70, 30, 0.05), transparent 18%, transparent 82%, rgba(122, 70, 30, 0.06)),
+        repeating-linear-gradient(0deg, rgba(62, 44, 24, 0.025), rgba(62, 44, 24, 0.025) 1px, transparent 1px, transparent 5px);
+      mix-blend-mode: multiply;
+    }
+
+    .leaflet-control-attribution {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 10px;
+      background: rgba(246, 239, 217, 0.82);
+    }
+
+    .leaflet-popup-content-wrapper {
+      background: #fff8e7;
+      color: var(--ink);
+      border: 1px solid rgba(82, 53, 27, 0.22);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+
+    .leaflet-popup-tip {
+      background: #fff8e7;
+    }
+
+    .leaflet-popup-content {
+      margin: 12px;
+      width: 290px;
+      max-width: min(290px, 70vw);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.36;
+    }
+
+    .popup-card h2 {
+      margin: 0 0 4px;
+      font-size: 1rem;
+      line-height: 1.2;
+      color: var(--navy);
+    }
+
+    .popup-meta {
+      margin: 0 0 8px;
+      color: var(--muted);
+      font-size: 0.82rem;
+    }
+
+    .popup-media {
+      display: grid;
+      grid-template-columns: 72px 1fr;
+      gap: 10px;
+      align-items: center;
+      margin: 8px 0;
+    }
+
+    .popup-media.icon-only-media {
+      grid-template-columns: 72px;
+    }
+
+    .popup-thumb,
+    .popup-fallback {
+      width: 72px;
+      height: 58px;
+      border-radius: 6px;
+      object-fit: cover;
+      background: linear-gradient(135deg, #ead7a5, #c39b38);
+      border: 1px solid rgba(82, 53, 27, 0.2);
+    }
+
+    .popup-fallback {
+      display: grid;
+      place-items: center;
+      color: #522b19;
+      font-weight: 800;
+      font-size: 1.6rem;
+    }
+
+    .popup-caption {
+      color: var(--muted);
+      font-size: 0.76rem;
+    }
+
+    .popup-card p {
+      margin: 7px 0;
+    }
+
+    .popup-source {
+      display: inline-flex;
+      align-items: center;
+      color: var(--blue);
+      font-weight: 650;
+      text-decoration: none;
+      border-bottom: 1px solid rgba(47, 111, 153, 0.35);
+    }
+
+    .popup-source:hover {
+      color: var(--red);
+    }
+
+    .map-panel,
+    .timeline-panel,
+    .legend-panel,
+    .status-panel {
+      position: absolute;
+      z-index: 700;
+      background:
+        linear-gradient(135deg, rgba(255, 252, 238, 0.95), rgba(241, 225, 184, 0.93)),
+        repeating-linear-gradient(45deg, rgba(95, 65, 35, 0.025) 0 1px, transparent 1px 6px);
+      border: 1px solid var(--panel-border);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(8px);
+    }
+
+    .year-badge {
+      position: absolute;
+      top: 14px;
+      left: 14px;
+      z-index: 720;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 142px;
+      padding: 9px 12px;
+      border-radius: 8px;
+      border: 1px solid var(--panel-border);
+      background: rgba(255, 248, 231, 0.94);
+      box-shadow: var(--shadow);
+    }
+
+    .year-label {
+      color: var(--muted);
+      font-size: 0.74rem;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      text-transform: uppercase;
+    }
+
+    #yearDisplay {
+      color: var(--red);
+      font-size: 1.55rem;
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    .icon-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      padding: 6px 10px;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .icon-only {
+      width: var(--control-size);
+      padding: 0;
+    }
+
+    .icon-button svg,
+    .icon-only svg {
+      width: 17px;
+      height: 17px;
+      stroke-width: 2.2;
+    }
+
+    .layers-panel {
+      top: 14px;
+      right: 14px;
+      width: min(342px, calc(100vw - 28px));
+      max-height: min(72vh, 650px);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .panel-toggle {
+      list-style: none;
+      cursor: pointer;
+      padding: 10px 12px;
+      color: var(--navy);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-weight: 800;
+      border-bottom: 1px solid rgba(82, 53, 27, 0.16);
+      user-select: none;
+    }
+
+    .panel-toggle::-webkit-details-marker {
+      display: none;
+    }
+
+    .panel-toggle::after {
+      content: "⌄";
+      float: right;
+      color: var(--muted);
+      font-weight: 800;
+    }
+
+    details[open] > .panel-toggle::after {
+      content: "⌃";
+    }
+
+    .layers-content {
+      padding: 10px 12px 12px;
+      overflow: auto;
+      max-height: calc(min(72vh, 650px) - 43px);
+    }
+
+    .quick-filters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+
+    .quick-filters button {
+      min-height: 28px;
+      padding: 4px 8px;
+      font-size: 0.78rem;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-weight: 700;
+    }
+
+    .layer-list {
+      display: grid;
+      gap: 6px;
+    }
+
+    .layer-item {
+      display: grid;
+      grid-template-columns: 18px 24px 1fr;
+      gap: 8px;
+      align-items: center;
+      min-height: 28px;
+      color: var(--ink);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 0.86rem;
+    }
+
+    .layer-item input {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--red);
+    }
+
+    .layer-symbol {
+      width: 22px;
+      height: 22px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      color: #fff;
+      font-size: 0.76rem;
+      font-weight: 800;
+      box-shadow: 0 1px 5px rgba(47, 39, 31, 0.18);
+    }
+
+    .legend-panel {
+      left: 14px;
+      bottom: 94px;
+      width: min(315px, calc(100vw - 28px));
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .legend-content {
+      padding: 10px 12px 12px;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 0.82rem;
+      line-height: 1.35;
+    }
+
+    .legend-grid {
+      display: grid;
+      gap: 7px;
+    }
+
+    .legend-row {
+      display: grid;
+      grid-template-columns: 28px 1fr;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .legend-line,
+    .legend-fill,
+    .legend-marker {
+      width: 27px;
+      height: 18px;
+      border-radius: 4px;
+      border: 2px solid var(--navy);
+      background: rgba(47, 111, 153, 0.13);
+    }
+
+    .legend-fill.annexed {
+      border-color: var(--green);
+      background: rgba(71, 115, 76, 0.24);
+    }
+
+    .legend-fill.disputed {
+      border-color: var(--purple);
+      border-style: dashed;
+      background: rgba(116, 80, 138, 0.16);
+    }
+
+    .legend-route {
+      position: relative;
+      width: 27px;
+      height: 18px;
+    }
+
+    .legend-route::before {
+      content: "";
+      position: absolute;
+      left: 1px;
+      right: 1px;
+      top: 50%;
+      border-top: 3px dashed var(--green);
+      transform: translateY(-50%);
+    }
+
+    .legend-marker {
+      width: 23px;
+      height: 23px;
+      border-radius: 50%;
+      border: 2px solid rgba(255, 255, 255, 0.8);
+      background: var(--red);
+      box-shadow: 0 0 0 1px rgba(47, 39, 31, 0.28);
+    }
+
+    .legend-note {
+      margin: 9px 0 0;
+      color: var(--muted);
+      font-size: 0.76rem;
+    }
+
+    .timeline-panel {
+      left: 50%;
+      bottom: 14px;
+      transform: translateX(-50%);
+      width: min(860px, calc(100vw - 28px));
+      border-radius: 8px;
+      padding: 10px 12px 12px;
+    }
+
+    .timeline-controls {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .timeline-buttons {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .timeline-range {
+      display: grid;
+      gap: 4px;
+      min-width: 180px;
+    }
+
+    #yearSlider {
+      width: 100%;
+      accent-color: var(--red);
+      cursor: pointer;
+    }
+
+    .range-labels {
+      display: flex;
+      justify-content: space-between;
+      color: var(--muted);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 0.72rem;
+    }
+
+    .current-state {
+      min-width: 212px;
+      color: var(--navy);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 0.84rem;
+      font-weight: 700;
+      text-align: right;
+    }
+
+    .status-panel {
+      left: 14px;
+      bottom: 14px;
+      max-width: min(390px, calc(100vw - 28px));
+      border-radius: 8px;
+      padding: 9px 11px;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 0.82rem;
+      color: var(--muted);
+      display: none;
+    }
+
+    .status-panel.is-visible {
+      display: block;
+    }
+
+    .map-credit {
+      position: absolute;
+      right: 14px;
+      bottom: 94px;
+      z-index: 690;
+      max-width: min(360px, calc(100vw - 28px));
+      padding: 6px 9px;
+      border-radius: 6px;
+      border: 1px solid rgba(95, 65, 35, 0.18);
+      background: rgba(255, 248, 231, 0.78);
+      color: var(--muted);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 0.72rem;
+      box-shadow: 0 6px 18px rgba(47, 39, 31, 0.14);
+    }
+
+    .map-credit a {
+      color: var(--navy);
+      font-weight: 700;
+      text-decoration: none;
+      border-bottom: 1px solid rgba(23, 58, 94, 0.35);
+    }
+
+    .event-marker {
+      display: grid;
+      place-items: center;
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      color: #fff;
+      border: 2px solid rgba(255, 255, 255, 0.82);
+      box-shadow: 0 2px 8px rgba(28, 22, 16, 0.34);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 0.78rem;
+      font-weight: 900;
+      line-height: 1;
+    }
+
+    .event-marker span {
+      transform: translateY(-0.5px);
+    }
+
+    .library-error {
+      position: absolute;
+      inset: 0;
+      z-index: 900;
+      display: none;
+      place-items: center;
+      padding: 24px;
+      background: #2f271f;
+      color: #fff8e7;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      text-align: center;
+    }
+
+    .library-error.is-visible {
+      display: grid;
+    }
+
+    @media (max-width: 900px) {
+      .layers-panel {
+        width: min(310px, calc(100vw - 28px));
+      }
+
+      .timeline-controls {
+        grid-template-columns: 1fr;
+      }
+
+      .current-state {
+        text-align: left;
+      }
+    }
+
+    @media (max-height: 620px) {
+      .legend-panel {
+        display: none;
+      }
+
+      .map-credit {
+        display: none;
+      }
+
+      .layers-panel {
+        max-height: calc(100vh - 154px);
+      }
+
+      .layers-content {
+        max-height: calc(100vh - 198px);
+      }
+
+      .timeline-panel {
+        padding: 8px 10px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell" aria-label="Interaktywna mapa edukacyjna">
+    <div id="map" role="application" aria-label="Mapa dokonań Kazimierza III Wielkiego"></div>
+
+    <div class="year-badge" aria-live="polite">
+      <div>
+        <div class="year-label">Rok</div>
+        <div id="yearDisplay">1333</div>
+      </div>
+    </div>
+
+    <details class="map-panel layers-panel" open>
+      <summary class="panel-toggle">Warstwy</summary>
+      <div class="layers-content">
+        <div class="quick-filters" id="quickFilters"></div>
+        <div class="layer-list" id="layerList"></div>
+      </div>
+    </details>
+
+    <details class="legend-panel" open>
+      <summary class="panel-toggle">Legenda</summary>
+      <div class="legend-content">
+        <div class="legend-grid">
+          <div class="legend-row"><span class="legend-line"></span><span>Granica Królestwa Polskiego w wybranym roku</span></div>
+          <div class="legend-row"><span class="legend-fill annexed"></span><span>Ziemie przyłączone do Królestwa</span></div>
+          <div class="legend-row"><span class="legend-fill disputed"></span><span>Ziemie sporne, lenna lub układy dynastyczne</span></div>
+          <div class="legend-row"><span class="legend-route"></span><span>Ważne szlaki handlowe</span></div>
+          <div class="legend-row"><span class="legend-marker"></span><span>Punkt wydarzenia lub osiągnięcia</span></div>
+        </div>
+        <p class="legend-note">Autor mapy: Nikodem Josek</p>
+      </div>
+    </details>
+
+    <section class="timeline-panel" aria-label="Oś czasu">
+      <div class="timeline-controls">
+        <div class="timeline-buttons">
+          <button id="startButton" class="icon-button" type="button"><span data-lucide="skip-back" aria-hidden="true"></span>1333</button>
+          <button id="prevButton" class="icon-only" type="button" aria-label="Poprzedni rok"><span data-lucide="chevron-left" aria-hidden="true"></span></button>
+          <button id="playButton" class="icon-button" type="button"><span data-lucide="play" aria-hidden="true"></span><span id="playText">Odtwórz</span></button>
+          <button id="nextButton" class="icon-only" type="button" aria-label="Następny rok"><span data-lucide="chevron-right" aria-hidden="true"></span></button>
+          <button id="endButton" class="icon-button" type="button">1370<span data-lucide="skip-forward" aria-hidden="true"></span></button>
+        </div>
+        <div class="timeline-range">
+          <input id="yearSlider" type="range" min="1333" max="1370" step="1" value="1333" aria-label="Wybierz rok od 1333 do 1370">
+          <div class="range-labels"><span>1333</span><span>1343</span><span>1349</span><span>1364</span><span>1370</span></div>
+        </div>
+        <div class="current-state" id="currentState">Królestwo Polskie po objęciu tronu przez Kazimierza III</div>
+      </div>
+    </section>
+
+    <div class="status-panel" id="statusPanel" role="status" aria-live="polite"></div>
+    <div class="map-credit">
+      Tło: <a href="https://commons.wikimedia.org/wiki/File:Polska_1333_-_1370.png" target="_blank" rel="noopener noreferrer">Poznaniak, Wikimedia Commons, CC BY-SA 3.0</a>
+    </div>
+    <div class="library-error" id="libraryError">
+      <div>
+        <strong>Nie udało się załadować biblioteki mapowej.</strong><br>
+        Sprawdź połączenie z internetem albo uruchom stronę ponownie.
+      </div>
+    </div>
+  </div>
+
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""></script>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <script>
+    "use strict";
+
+    const START_YEAR = 1333;
+    const END_YEAR = 1370;
+    const MAP_IMAGE_SIZE = { width: 2636, height: 2507 };
+    const HISTORICAL_IMAGE_BOUNDS = [[0, 0], [MAP_IMAGE_SIZE.height, MAP_IMAGE_SIZE.width]];
+    const INITIAL_VIEW_BOUNDS = [[0, 0], [MAP_IMAGE_SIZE.height, MAP_IMAGE_SIZE.width]];
+
+    const mapProjection = {
+      x: [184.76294729224367, -1.1564963483919755, -2600.315078288266],
+      y: [-2.6647091861369034, -290.5087130116542, 16364.552422362443]
+    };
+
+    const sources = {
+      zpeBorders: {
+        title: "ZPE, Między nowym a starym. Polska za Kazimierza Wielkiego",
+        url: "https://zpe.gov.pl/a/przeczytaj/DhGVZg0ij"
+      },
+      zpeMap: {
+        title: "ZPE, Mapa interaktywna: Polska Kazimierza Wielkiego",
+        url: "https://zpe.gov.pl/a/mapa-interaktywna/DQEWIeU3B"
+      },
+      lelewelMap: {
+        title: "Polona, Mały atlas do historyi polskiey, mapa Polski i Litwy ok. 1370",
+        url: "https://polona.pl/preview/10475636-f6b5-4924-befc-6f454d40a2ba"
+      },
+      kaliszMhp: {
+        title: "Muzeum Historii Polski, Pokój kaliski",
+        url: "https://muzhp.pl/kalendarium/pokoj-kaliski"
+      },
+      kaliszDzieje: {
+        title: "Dzieje.pl/PAP, Traktat pokojowy zwany kaliskim",
+        url: "https://dzieje.pl/aktualnosci/675-lat-temu-kazimierz-wielki-zawarl-z-zakonem-krzyzackim-traktat-pokojowy-zwany"
+      },
+      ujHistoria: {
+        title: "Uniwersytet Jagielloński, Historia",
+        url: "https://www.uj.edu.pl/uniwersytet-z-collegium-medicum/historia"
+      },
+      uruszczakStatuty: {
+        title: "Wacław Uruszczak, Statuty Kazimierza Wielkiego jako źródło prawa polskiego",
+        url: "https://dspace.uni.lodz.pl/xmlui/bitstream/handle/11089/31221/97-115%20Uruszczak.pdf?isAllowed=y&sequence=1"
+      },
+      zpeStatuty: {
+        title: "ZPE, Kodeksy prawne: statuty Kazimierza Wielkiego",
+        url: "https://zpe.gov.pl/b/kodeksy-prawne-statuty-kazimierza-wielkiego/ProqewBmQ"
+      },
+      sztetlPrivileges: {
+        title: "Wirtualny Sztetl/POLIN, Przywileje dla Żydów",
+        url: "https://sztetl.org.pl/pl/slownik/przywileje-dla-zydow"
+      },
+      polinHistory: {
+        title: "Muzeum POLIN, 1000 lat historii Żydów polskich",
+        url: "https://www.polin.pl/sites/default/files/podrecznik_1000_lat_historii_zydow_polskich_podroz_przez_wieki_web.pdf"
+      },
+      nbpGrosz: {
+        title: "Centrum Pieniądza NBP, Grosz Kazimierza III Wielkiego",
+        url: "https://cp.nbp.pl/zbiory/2480-2/"
+      },
+      mnkGrosz: {
+        title: "Muzeum Narodowe w Krakowie, grosz krakowski",
+        url: "https://zbiory.mnk.pl/pl/katalog/55719"
+      },
+      kopalniaStatut: {
+        title: "Kopalnia Soli Wieliczka, Statut Żup Krakowskich",
+        url: "https://www.kopalnia.pl/kopalnia-wiedzy/statut-zup-krakowskich-7aml"
+      },
+      courtArchive: {
+        title: "Szukaj w Archiwach, Sąd wyższy prawa niemieckiego na zamku krakowskim",
+        url: "https://www.szukajwarchiwach.gov.pl/ru/zespol/-/zespol/30648"
+      },
+      kazimierzLokacja: {
+        title: "Poczet Krakowski, początki miasta Kazimierza",
+        url: "https://www.poczetkrakowski.pl/tomy/show_article,poczatki-miasta-lokacja-na-prawie-magdeburskim-3431.html"
+      },
+      muzhpKazimierz: {
+        title: "Muzeum Historii Polski, lokacja Kazimierza pod Krakowem",
+        url: "https://muzhp.pl/kalendarium/lokacja-miasta-kazimierza-pod-krakowem"
+      },
+      bydgoszcz: {
+        title: "Oficjalny Serwis Bydgoszczy, Kazimierz III Wielki i prawa miejskie Bydgoszczy",
+        url: "https://www.bydgoszcz.pl/aktualnosci/tresc/swietowalismy-wraz-z-krolem/"
+      },
+      lvivMhp: {
+        title: "Muzeum Historii Polski, przywilej Kazimierza Wielkiego dla lwowskiego arcybiskupa ormiańskiego",
+        url: "https://muzhp.pl/kalendarium/przywilej-kazimierza-wielkiego-dla-lwowskiego-arcybiskupa-ormianskiego-grzegorza"
+      },
+      rusZpe: {
+        title: "ZPE, Podbój Rusi Halickiej i sprawa sukcesji",
+        url: "https://zpe.gov.pl/a/przeczytaj/DTHDwkZN9"
+      },
+      namyslowMhp: {
+        title: "Muzeum Historii Polski, Pokój w Namysłowie",
+        url: "https://muzhp.pl/kalendarium/pokoj-w-namyslowie"
+      },
+      wyszehrad: {
+        title: "The Visegrad Group, Kongres Wyszehradzki",
+        url: "https://www.visegradgroup.eu/kongres-wyszeh/gyorgy-racz-kongres"
+      },
+      budaZpe: {
+        title: "ZPE, W cieniu walki o sukcesję",
+        url: "https://zpe.gov.pl/a/sprawdz-sie/DsfhV6O4l"
+      },
+      krakowMeet: {
+        title: "ZPE, Polityka zagraniczna Kazimierza Wielkiego",
+        url: "https://zpe.gov.pl/pdf/PqMiglGLR"
+      },
+      bedzinNid: {
+        title: "Zabytek.pl/NID, zamek górny w Będzinie",
+        url: "https://zabytek.pl/pl/obiekty/bedzin-zamek"
+      },
+      szydlowNid: {
+        title: "Zabytek.pl/NID, zespół zamkowy w Szydłowie",
+        url: "https://zabytek.pl/pl/obiekty/szydlow-zespol-zamkowy"
+      },
+      niepolomiceNid: {
+        title: "Zabytek.pl/NID, Zamek Królewski w Niepołomicach",
+        url: "https://zabytek.pl/pl/obiekty/niepolomice-zamek-krolewski"
+      },
+      tradeMyslinski: {
+        title: "Kazimierz Myśliński, Lublin a handel Wrocławia z Rusią",
+        url: "https://bazhum.muzhp.pl/media/texts/rocznik-lubelski/1960-tom-3/rocznik_lubelski-r1960-t3-s5-36.pdf"
+      },
+      roadsGddkia: {
+        title: "GDDKiA, Monografia drogownictwa na Podkarpaciu",
+        url: "https://www.archiwum.gddkia.gov.pl/pl/aprint/32255/200-lat-Centralnej-Administracji-Drogowej-Monografia-drogownictwa-na-Podkarpaciu-cz1"
+      },
+      commonsCasimirMap: {
+        title: "Wikimedia Commons, Polska 1333-1370.png, autor Poznaniak, CC BY-SA 3.0",
+        url: "https://commons.wikimedia.org/wiki/File:Polska_1333_-_1370.png"
+      }
+    };
+
+    const images = {
+      portraitKazimierz: "https://commons.wikimedia.org/wiki/Special:FilePath/Kazimierz%20III%20Wielki.jpg?width=320",
+      wawelEntrance: "https://commons.wikimedia.org/wiki/Special:FilePath/Wawel%20entrance.jpg?width=320",
+      kazimierzTownHall: "https://commons.wikimedia.org/wiki/Special:FilePath/Krakow-kazimierz-ratusz.jpg?width=320",
+      groszKrakowski: "https://commons.wikimedia.org/wiki/Special:FilePath/Grosz%20krakowski%20Kazimierza%20Wielkiego.jpg?width=320"
+    };
+
+    const historicalMapBackgrounds = {
+      1333: {
+        image: "https://upload.wikimedia.org/wikipedia/commons/d/d0/Polska_1333_-_1370.png",
+        title: "Mapa Polski za panowania Kazimierza III Wielkiego (1333-1370)",
+        author: "Poznaniak",
+        license: "CC BY-SA 3.0",
+        sourceTitle: sources.commonsCasimirMap.title,
+        sourceUrl: sources.commonsCasimirMap.url
+      },
+      1343: null,
+      1349: null,
+      1366: null,
+      1370: null
+    };
+    historicalMapBackgrounds[1343] = historicalMapBackgrounds[1333];
+    historicalMapBackgrounds[1349] = historicalMapBackgrounds[1333];
+    historicalMapBackgrounds[1366] = historicalMapBackgrounds[1333];
+    historicalMapBackgrounds[1370] = historicalMapBackgrounds[1333];
+
+    const layersConfig = {
+      borders: { label: "Historyczne granice państwa", color: "#173a5e", symbol: "◇" },
+      annexed: { label: "Ziemie przyłączone", color: "#47734c", symbol: "+" },
+      disputed: { label: "Ziemie sporne lub związane z układami", color: "#74508a", symbol: "?" },
+      castles: { label: "Zamki zbudowane lub rozbudowane", color: "#9d2f27", symbol: "♜" },
+      cities: { label: "Miasta lokowane lub rozwijane", color: "#2f6f99", symbol: "◆" },
+      fortifications: { label: "Mury miejskie i fortyfikacje", color: "#6a5a2b", symbol: "▣" },
+      education: { label: "Akademia Krakowska i edukacja", color: "#c39b38", symbol: "✦" },
+      law: { label: "Reformy prawa", color: "#8f3d66", symbol: "§" },
+      administration: { label: "Reformy administracyjne", color: "#476f7b", symbol: "A" },
+      economy: { label: "Reformy gospodarcze i monetarne", color: "#a36b21", symbol: "M" },
+      trade: { label: "Handel i ważne szlaki", color: "#2f7d63", symbol: "↔" },
+      diplomacy: { label: "Dyplomacja i traktaty", color: "#5b5c9c", symbol: "T" },
+      meetings: { label: "Zjazdy i spotkania monarchów", color: "#b57a2a", symbol: "♔" },
+      politics: { label: "Wydarzenia polityczne", color: "#344d8c", symbol: "P" },
+      military: { label: "Wydarzenia militarne", color: "#8d2e2e", symbol: "⚔" },
+      foundations: { label: "Fundacje królewskie", color: "#7f6230", symbol: "F" },
+      other: { label: "Inne ważne osiągnięcia", color: "#59665b", symbol: "•" }
+    };
+
+    const quickFilters = [
+      { label: "Wszystko", layers: Object.keys(layersConfig) },
+      { label: "Granice", layers: ["borders", "annexed", "disputed"] },
+      { label: "Zamki", layers: ["borders", "castles", "fortifications"] },
+      { label: "Miasta", layers: ["borders", "cities", "trade"] },
+      { label: "Reformy", layers: ["borders", "law", "administration", "economy"] },
+      { label: "Dyplomacja", layers: ["borders", "disputed", "diplomacy", "meetings", "politics", "military"] },
+      { label: "Edukacja", layers: ["borders", "education", "foundations"] }
+    ];
+
+    function polygonFeature(id, name, coordinates, properties = {}) {
+      return {
+        type: "Feature",
+        properties: { id, name, ...properties },
+        geometry: { type: "Polygon", coordinates: [coordinates] }
+      };
+    }
+
+    function featureCollection(features) {
+      return { type: "FeatureCollection", features };
+    }
+
+    const border1333 = [
+      [15.9, 52.9], [17.3, 53.05], [18.05, 52.95], [18.75, 52.55],
+      [18.85, 52.05], [19.35, 51.62], [20.35, 51.45], [21.25, 51.08],
+      [22.2, 50.48], [22.62, 49.95], [22.28, 49.52], [21.12, 49.13],
+      [19.65, 49.28], [18.45, 49.62], [17.28, 50.18], [16.42, 50.76],
+      [15.58, 51.45], [15.45, 52.25], [15.9, 52.9]
+    ];
+
+    const border1343 = [
+      [15.9, 52.9], [17.25, 53.28], [18.65, 53.25], [19.25, 52.78],
+      [19.08, 52.2], [19.42, 51.72], [20.35, 51.45], [21.25, 51.08],
+      [22.2, 50.48], [22.62, 49.95], [22.28, 49.52], [21.12, 49.13],
+      [19.65, 49.28], [18.45, 49.62], [17.28, 50.18], [16.42, 50.76],
+      [15.58, 51.45], [15.45, 52.25], [15.9, 52.9]
+    ];
+
+    const border1349 = [
+      [15.9, 52.9], [17.25, 53.28], [18.65, 53.25], [19.25, 52.78],
+      [19.08, 52.2], [19.55, 51.72], [20.95, 51.45], [22.45, 51.08],
+      [23.75, 50.62], [24.55, 50.08], [24.88, 49.36], [24.42, 48.83],
+      [23.25, 48.62], [21.92, 48.88], [20.62, 49.1], [19.65, 49.28],
+      [18.45, 49.62], [17.28, 50.18], [16.42, 50.76], [15.58, 51.45],
+      [15.45, 52.25], [15.9, 52.9]
+    ];
+
+    const border1366 = [
+      [15.9, 52.9], [17.25, 53.28], [18.65, 53.25], [19.25, 52.78],
+      [19.08, 52.2], [19.55, 51.72], [21.1, 51.48], [22.9, 51.15],
+      [24.25, 50.88], [25.55, 50.58], [26.38, 49.72], [26.02, 48.92],
+      [24.65, 48.48], [23.25, 48.62], [21.92, 48.88], [20.62, 49.1],
+      [19.65, 49.28], [18.45, 49.62], [17.28, 50.18], [16.42, 50.76],
+      [15.58, 51.45], [15.45, 52.25], [15.9, 52.9]
+    ];
+
+    const border1370 = [
+      [15.9, 52.9], [17.25, 53.28], [18.65, 53.25], [19.25, 52.78],
+      [19.08, 52.2], [19.55, 51.72], [21.1, 51.48], [22.9, 51.15],
+      [24.25, 50.88], [25.7, 50.6], [26.78, 49.8], [26.42, 48.84],
+      [24.65, 48.48], [23.25, 48.62], [21.92, 48.88], [20.62, 49.1],
+      [19.65, 49.28], [18.45, 49.62], [17.28, 50.18], [16.42, 50.76],
+      [15.58, 51.45], [15.45, 52.25], [15.9, 52.9]
+    ];
+
+    const bordersByYear = {
+      1333: {
+        label: "Królestwo Polskie po objęciu tronu przez Kazimierza III",
+        sourceTitle: sources.zpeBorders.title,
+        sourceUrl: sources.zpeBorders.url,
+        confidence: "medium",
+        geojson: featureCollection([
+          polygonFeature("border-1333", "Królestwo Polskie w 1333 roku", border1333, {
+            note: "Uproszczony zasięg ziem odziedziczonych po Władysławie Łokietku: rdzeń Wielkopolski i Małopolski."
+          })
+        ])
+      },
+      1343: {
+        label: "Po pokoju kaliskim: Kujawy i ziemia dobrzyńska wracają do Królestwa",
+        sourceTitle: sources.kaliszMhp.title,
+        sourceUrl: sources.kaliszMhp.url,
+        confidence: "medium",
+        geojson: featureCollection([
+          polygonFeature("border-1343", "Królestwo Polskie po pokoju kaliskim", border1343, {
+            note: "Granica powiększona o Kujawy i ziemię dobrzyńską; Pomorze Gdańskie pozostaje poza Królestwem."
+          })
+        ])
+      },
+      1349: {
+        label: "Po przyłączeniu zasadniczej części Rusi Halickiej",
+        sourceTitle: sources.rusZpe.title,
+        sourceUrl: sources.rusZpe.url,
+        confidence: "medium",
+        geojson: featureCollection([
+          polygonFeature("border-1349", "Królestwo Polskie z Rusią Halicką", border1349, {
+            note: "Wschodni zasięg jest rekonstrukcją syntetyczną; część ziem ruskich pozostawała przedmiotem rywalizacji."
+          })
+        ])
+      },
+      1366: {
+        label: "Po układach kończących kolejny etap walk o ziemie ruskie",
+        sourceTitle: sources.zpeMap.title,
+        sourceUrl: sources.zpeMap.url,
+        confidence: "medium",
+        geojson: featureCollection([
+          polygonFeature("border-1366", "Królestwo Polskie około 1366 roku", border1366, {
+            note: "Uproszczony zasięg obejmuje ziemie wcielone i silnie podporządkowane Królestwu."
+          })
+        ])
+      },
+      1370: {
+        label: "Końcowy stan panowania Kazimierza III Wielkiego",
+        sourceTitle: sources.lelewelMap.title,
+        sourceUrl: sources.lelewelMap.url,
+        confidence: "medium",
+        geojson: featureCollection([
+          polygonFeature("border-1370", "Królestwo Polskie w 1370 roku", border1370, {
+            note: "Uproszczona rekonstrukcja stanu końcowego z wyróżnieniem ziem ruskich i podporządkowań."
+          })
+        ])
+      }
+    };
+
+    const polandAreaPixelPathSegments = {
+      core1333: "1061,2038 1034,2014 1019,2028 1010,2024 999,2036 989,2032 964,1975 968,1961 932,1921 940,1891 960,1880 986,1833 969,1784 949,1772 897,1764 882,1751 892,1736 876,1691 916,1670 916,1617 898,1598 867,1600 838,1568 817,1566 786,1536 772,1492 744,1486 736,1456 707,1444 676,1454 652,1440 640,1419 662,1388 624,1362 632,1341 597,1332 578,1298 525,1288 509,1308 465,1308 450,1299 431,1262 394,1247 402,1238 396,1228 322,1216 268,1149 262,1079 230,1058 204,1024 217,982 235,988 265,970 313,964 330,938 358,928 414,934 430,925 436,894 460,884 468,871 480,805 478,791 459,786 435,748 446,751 452,772 467,776 542,748 562,752 574,736 587,754 610,748 644,768 628,804 630,874 686,905 658,937 664,948 698,958 698,1008 684,1028 756,1088 780,1088 805,1102 838,1102 887,1086 909,1130 940,1110 961,1110 1000,1164 995,1172 978,1172 970,1188 1002,1239 1010,1288 1027,1306 1102,1324 1117,1314 1181,1306 1213,1318 1273,1318 1296,1287 1294,1270 1317,1260 1331,1240 1362,1246 1392,1221 1426,1165 1426,1138 1458,1136 1516,1183 1540,1237 1540,1281 1566,1289 1566,1318 1588,1328 1594,1345 1610,1354 1594,1383 1600,1478 1536,1524 1564,1550 1560,1612 1548,1622 1499,1634 1474,1674 1424,1715 1388,1762 1392,1800 1410,1816 1410,1830 1388,1850 1369,1848 1358,1876 1374,1920 1410,1963 1393,1966 1375,1950 1363,1960 1354,1952 1346,1958 1327,1946 1313,1954 1289,1940 1221,1984 1154,1970 1127,1950 1112,1964 1088,1956 1070,1967 1084,1993 1086,2008 1076,2020 1084,2030",
+      annexedAndFeudal1349: "1991,2456 1992,2443 1970,2430 1970,2406 1946,2396 1920,2368 1884,2238 1848,2226 1838,2208 1801,2210 1785,2176 1774,2180 1748,2158 1726,2164 1700,2128 1680,2126 1658,2138 1645,2128 1636,2136 1624,2102 1602,2094 1595,2072 1580,2076 1546,2042 1504,2036 1476,2016 1453,2020 1411,1964 1393,1966 1375,1950 1363,1960 1354,1952 1337,1956 1327,1946 1313,1954 1289,1940 1221,1984 1154,1970 1127,1950 1112,1964 1088,1956 1070,1967 1086,2008 1076,2036 1061,2038 1034,2014 1019,2028 988,2032 964,1975 968,1961 932,1921 940,1891 960,1880 986,1838 974,1790 949,1772 897,1764 882,1751 892,1736 876,1691 916,1670 916,1617 898,1598 867,1600 838,1568 817,1566 786,1536 766,1486 744,1502 716,1500 689,1454 618,1512 602,1502 574,1468 602,1432 647,1412 662,1392 624,1362 632,1341 597,1332 586,1305 569,1294 525,1288 509,1308 469,1310 450,1299 431,1262 404,1250 349,1264 334,1247 332,1223 268,1149 262,1079 230,1058 204,1024 216,980 239,986 254,972 308,964 324,952 328,916 314,897 328,888 318,856 338,822 332,802 338,778 371,774 380,760 354,732 344,678 370,678 387,694 399,690 412,725 446,751 448,767 462,776 542,748 562,752 574,736 587,754 610,748 623,762 656,774 672,766 690,786 686,827 699,832 711,810 718,820 704,880 769,912 814,914 830,896 865,890 895,872 915,844 932,844 944,858 966,844 992,880 1021,850 1083,878 1112,867 1125,830 1147,824 1134,862 1138,894 1122,916 1144,940 1146,955 1120,976 1114,1000 1094,1005 1098,1023 1080,1054 1091,1076 1164,967 1199,954 1228,929 1265,848 1280,872 1304,887 1282,937 1296,965 1232,983 1234,1033 1220,1072 1187,1062 1147,1082 1133,1078 1108,1090 1091,1082 1048,1092 950,1034 912,1054 890,1079 905,1128 960,1108 1000,1162 1001,1170 978,1172 970,1188 994,1219 1008,1281 1027,1306 1103,1324 1117,1314 1183,1304 1209,1316 1273,1316 1296,1287 1294,1270 1317,1260 1332,1238 1362,1246 1392,1221 1426,1162 1422,1134 1458,1136 1516,1183 1540,1237 1540,1281 1566,1289 1566,1318 1588,1328 1594,1345 1610,1354 1594,1386 1604,1470 1594,1486 1536,1524 1564,1550 1569,1584 1620,1608 1658,1613 1644,1652 1654,1670 1726,1678 1736,1696 1763,1696 1796,1732 1854,1710 1927,1732 1952,1716 1976,1682 1976,1671 1948,1650 1962,1603 1979,1590 2049,1658 2122,1680 2146,1714 2174,1729 2192,1784 2214,1812 2216,1833 2202,1871 2213,1892 2230,1897 2220,1907 2226,1944 2162,1990 2080,2008 2080,2053 2090,2071 2066,2084 2106,2148 2124,2211 2093,2220 2040,2290 2020,2397",
+      annexedAndFeudal1349Extra: "1468,892 1484,850 1479,842 1459,842 1433,870 1392,856 1406,776 1390,763 1418,737 1418,726 1499,676 1545,734 1560,734 1564,792 1584,820 1571,862 1513,870",
+      easternExpansion1366: "1991,2456 1992,2443 1970,2430 1970,2406 1946,2396 1920,2368 1884,2238 1848,2226 1838,2208 1801,2210 1785,2176 1774,2180 1748,2158 1726,2164 1700,2128 1680,2126 1658,2138 1645,2128 1636,2136 1624,2102 1602,2094 1595,2072 1580,2076 1546,2042 1504,2036 1476,2016 1453,2020 1411,1964 1393,1966 1375,1950 1363,1960 1354,1952 1337,1956 1327,1946 1313,1954 1289,1940 1221,1984 1154,1970 1127,1950 1112,1964 1088,1956 1070,1967 1086,2008 1076,2036 1061,2038 1034,2014 1019,2028 988,2032 964,1975 968,1961 932,1921 940,1891 960,1880 986,1838 974,1790 949,1772 897,1764 882,1751 892,1736 876,1691 916,1670 916,1617 898,1598 867,1600 838,1568 817,1566 786,1536 766,1486 744,1502 716,1500 689,1454 618,1512 602,1502 574,1468 602,1432 647,1412 662,1392 624,1362 632,1341 597,1332 586,1305 569,1294 525,1288 509,1308 469,1310 450,1299 431,1262 404,1250 349,1264 334,1247 332,1223 268,1149 262,1079 230,1058 204,1024 216,984 200,961 208,923 200,889 208,872 322,896 326,877 318,856 338,822 332,802 340,775 378,767 378,750 352,727 344,678 370,678 387,694 399,690 412,725 446,751 448,767 462,776 542,748 562,752 574,736 587,754 610,748 623,762 656,774 672,766 690,786 686,827 699,832 711,810 718,820 704,880 765,912 806,916 830,896 865,890 895,872 915,844 932,844 944,858 966,844 992,880 1021,850 1076,878 1093,868 1106,872 1125,830 1162,824 1198,840 1252,798 1269,798 1274,784 1286,786 1305,766 1313,770 1323,762 1359,784 1366,768 1389,764 1414,742 1418,726 1497,676 1545,734 1560,734 1564,792 1584,814 1574,856 1503,872 1468,890 1442,944 1454,1004 1425,990 1368,999 1372,1045 1352,1057 1388,1083 1388,1109 1426,1138 1458,1136 1476,1146 1516,1183 1540,1237 1540,1281 1566,1289 1566,1318 1588,1328 1594,1345 1611,1354 1658,1356 1700,1344 1710,1325 1704,1299 1727,1290 1783,1310 1826,1248 1860,1238 1912,1182 1938,1192 1956,1214 1985,1214 1976,1263 1998,1289 1980,1338 1942,1336 1919,1344 1880,1416 1882,1505 1840,1572 1849,1590 1874,1597 1872,1629 1913,1658 1945,1652 1956,1640 1962,1603 1981,1592 2042,1652 2076,1672 2122,1680 2146,1714 2174,1729 2192,1784 2214,1812 2216,1833 2202,1870 2213,1892 2239,1898 2254,1880 2282,1880 2372,1972 2387,1962 2424,1958 2450,1934 2509,1932 2525,1976 2582,1998 2620,2068 2622,2106 2592,2129 2586,2147 2622,2191 2624,2206 2614,2205 2608,2187 2589,2170 2493,2144 2488,2119 2475,2110 2454,2114 2441,2132 2338,2132 2323,2138 2308,2160 2282,2142 2265,2148 2242,2148 2229,2138 2220,2142 2206,2122 2180,2138 2160,2120 2132,2118 2126,2099 2090,2072 2071,2076 2066,2088 2106,2148 2124,2211 2093,2220 2040,2290 2020,2397",
+      full1370: "2635,2074 2622,2084 2624,2103 2634,2109 2596,2143 2616,2171 2614,2182 2630,2187 2624,2197 2629,2216 2608,2212 2610,2193 2588,2180 2491,2154 2470,2118 2441,2140 2398,2142 2389,2130 2363,2144 2342,2140 2308,2170 2296,2152 2238,2158 2201,2138 2180,2148 2162,2128 2128,2126 2118,2104 2095,2092 2096,2125 2114,2146 2122,2192 2134,2211 2128,2220 2100,2226 2040,2303 2032,2388 2000,2464 1922,2372 1878,2244 1831,2216 1795,2208 1776,2182 1727,2166 1697,2136 1634,2136 1622,2111 1594,2082 1571,2076 1550,2046 1447,2020 1397,1966 1291,1950 1225,1986 1087,1958 1078,1967 1086,2006 1078,2036 1059,2038 1036,2024 994,2036 962,1967 925,1916 909,1920 875,1962 837,1950 836,1928 828,1922 798,1932 768,1926 745,1940 710,1840 637,1886 602,1845 596,1802 567,1796 545,1776 528,1782 454,1665 414,1627 406,1590 430,1575 438,1515 432,1506 410,1512 402,1504 401,1464 373,1464 322,1444 254,1462 242,1430 250,1398 245,1336 189,1348 159,1328 125,1336 88,1331 78,1298 88,1282 119,1282 141,1298 168,1292 184,1274 176,1234 137,1224 120,1210 108,1134 116,1114 167,1110 214,1068 210,1031 194,1019 214,988 192,963 206,930 192,911 200,898 192,889 202,874 227,866 265,884 314,874 312,852 338,816 330,774 348,764 367,774 378,764 362,756 342,714 352,701 338,689 347,676 406,694 461,774 571,732 596,748 675,766 692,781 698,806 726,814 720,875 768,902 806,904 826,888 852,888 938,828 945,844 970,836 993,866 1023,842 1080,868 1097,868 1131,818 1158,814 1202,828 1303,764 1349,768 1383,754 1452,696 1503,668 1550,724 1568,730 1572,786 1590,808 1592,827 1575,870 1543,870 1476,897 1450,947 1466,986 1454,1022 1444,1006 1422,1000 1384,1011 1376,1056 1396,1078 1394,1102 1413,1122 1463,1128 1522,1176 1550,1235 1542,1257 1555,1276 1574,1284 1574,1312 1593,1320 1606,1342 1635,1348 1692,1338 1702,1325 1696,1297 1705,1288 1730,1280 1780,1300 1822,1240 1875,1214 1886,1189 1910,1174 1932,1178 1961,1204 1995,1208 1982,1260 2010,1281 1990,1326 1992,1349 1947,1344 1927,1350 1890,1416 1892,1506 1848,1571 1856,1584 1882,1592 1880,1624 1915,1646 1942,1642 1958,1593 1973,1582 1990,1586 1998,1608 2022,1620 2029,1640 2039,1638 2081,1664 2124,1670 2150,1706 2182,1725 2198,1775 2224,1812 2226,1835 2212,1870 2220,1884 2239,1888 2253,1868 2286,1872 2367,1968 2386,1952 2410,1956 2442,1926 2452,1934 2462,1924 2511,1924 2524,1963 2584,1986 2635,2068",
+      kujawyDobrzyn1343: "640,915 690,875 755,880 820,852 900,858 970,825 1038,875 1010,950 1040,1002 966,1048 870,1068 800,1100 708,1070 654,1008",
+      wschowa1343: "346,1292 318,1260 324,1237 366,1224 404,1246 398,1292"
+    };
+
+    const polandAreaSegmentsByYear = {
+      1333: ["core1333"],
+      1343: ["core1333", "kujawyDobrzyn1343", "wschowa1343"],
+      1349: ["annexedAndFeudal1349", "annexedAndFeudal1349Extra"],
+      1366: ["easternExpansion1366"],
+      1370: ["full1370"]
+    };
+
+    const polandAreaPathCache = new Map();
+
+    const territories = [
+      {
+        id: "kujawy-dobrzyn",
+        name: "Kujawy i ziemia dobrzyńska",
+        layer: "annexed",
+        yearStart: 1343,
+        yearEnd: 1370,
+        sourceTitle: sources.kaliszDzieje.title,
+        sourceUrl: sources.kaliszDzieje.url,
+        confidence: "high",
+        description: "Na mocy pokoju kaliskiego Kazimierz odzyskał od Zakonu Kujawy i ziemię dobrzyńską.",
+        geojson: polygonFeature("kujawy-dobrzyn", "Kujawy i ziemia dobrzyńska", [
+          [17.55, 53.05], [18.7, 53.0], [19.1, 52.65], [19.0, 52.2],
+          [18.55, 51.95], [17.65, 52.08], [17.25, 52.55], [17.55, 53.05]
+        ])
+      },
+      {
+        id: "rus-halicka",
+        name: "Ruś Halicka / Ruś Czerwona",
+        layer: "annexed",
+        yearStart: 1349,
+        yearEnd: 1370,
+        sourceTitle: sources.rusZpe.title,
+        sourceUrl: sources.rusZpe.url,
+        confidence: "medium",
+        description: "Najważniejszy kierunek ekspansji wschodniej; Lwów, Halicz, Przemyśl i Sanok znalazły się w orbicie Królestwa.",
+        geojson: polygonFeature("rus-halicka", "Ruś Halicka / Czerwona", [
+          [22.1, 50.2], [23.7, 50.65], [24.75, 50.08], [24.9, 49.35],
+          [24.35, 48.82], [23.05, 48.62], [21.9, 48.9], [21.75, 49.65],
+          [22.1, 50.2]
+        ])
+      },
+      {
+        id: "chelmsko-belz",
+        name: "Ziemie chełmsko-bełskie i włodzimierskie",
+        layer: "disputed",
+        yearStart: 1366,
+        yearEnd: 1370,
+        sourceTitle: sources.zpeMap.title,
+        sourceUrl: sources.zpeMap.url,
+        confidence: "medium",
+        description: "Obszary na pograniczu polsko-litewsko-ruskim, zależne od układów i kolejnych wypraw.",
+        geojson: polygonFeature("chelmsko-belz", "Ziemie chełmsko-bełskie i włodzimierskie", [
+          [23.25, 51.25], [24.6, 51.05], [25.55, 50.55], [25.35, 49.95],
+          [24.2, 50.0], [23.25, 50.48], [23.25, 51.25]
+        ])
+      },
+      {
+        id: "podole",
+        name: "Podole jako obszar podporządkowany lub sporny",
+        layer: "disputed",
+        yearStart: 1366,
+        yearEnd: 1370,
+        sourceTitle: sources.zpeMap.title,
+        sourceUrl: sources.zpeMap.url,
+        confidence: "low",
+        description: "W końcu panowania Kazimierza część atlasów pokazuje Podole jako obszar związany z Królestwem, ale status i granice wymagają ostrożności.",
+        geojson: polygonFeature("podole", "Podole", [
+          [24.3, 49.35], [25.9, 49.55], [26.8, 49.05], [26.42, 48.45],
+          [24.85, 48.35], [24.25, 48.8], [24.3, 49.35]
+        ])
+      },
+      {
+        id: "mazowsze",
+        name: "Mazowsze w relacji lennej i politycznej",
+        layer: "disputed",
+        yearStart: 1351,
+        yearEnd: 1370,
+        sourceTitle: sources.zpeMap.title,
+        sourceUrl: sources.zpeMap.url,
+        confidence: "medium",
+        description: "Mazowsze nie było jednolicie wcielone do Królestwa; mapa pokazuje je jako obszar zależności i układów politycznych.",
+        geojson: polygonFeature("mazowsze", "Mazowsze", [
+          [19.75, 53.2], [21.55, 53.0], [22.25, 52.4], [22.05, 51.65],
+          [20.7, 51.55], [19.45, 52.05], [19.75, 53.2]
+        ])
+      },
+      {
+        id: "pomorze-zakon",
+        name: "Pomorze Gdańskie oraz ziemie chełmińska i michałowska",
+        layer: "disputed",
+        yearStart: 1343,
+        yearEnd: 1370,
+        sourceTitle: sources.kaliszMhp.title,
+        sourceUrl: sources.kaliszMhp.url,
+        confidence: "high",
+        description: "Pokój kaliski sankcjonował pozostawanie tych ziem przy Zakonie; pokazano je jako obszar utraconych roszczeń.",
+        geojson: polygonFeature("pomorze-zakon", "Pomorze Gdańskie i ziemia chełmińska", [
+          [17.3, 54.8], [19.7, 54.75], [20.25, 53.9], [19.45, 53.1],
+          [18.35, 53.05], [17.35, 53.35], [17.3, 54.8]
+        ])
+      },
+      {
+        id: "slask",
+        name: "Śląsk w orbicie czeskiej",
+        layer: "disputed",
+        yearStart: 1335,
+        yearEnd: 1370,
+        sourceTitle: sources.namyslowMhp.title,
+        sourceUrl: sources.namyslowMhp.url,
+        confidence: "medium",
+        description: "Większość księstw śląskich pozostawała poza realną władzą Kazimierza; kwestia formalnych praw była przedmiotem układów z Luksemburgami.",
+        geojson: polygonFeature("slask", "Śląsk", [
+          [14.7, 51.55], [17.45, 51.45], [18.45, 50.55], [17.6, 49.75],
+          [15.9, 50.05], [14.65, 50.6], [14.7, 51.55]
+        ])
+      }
+    ];
+
+    const tradeRoutes = [
+      {
+        id: "krakow-lwow",
+        name: "Szlak z Krakowa na Ruś",
+        layer: "trade",
+        yearStart: 1349,
+        yearEnd: 1370,
+        sourceTitle: sources.tradeMyslinski.title,
+        sourceUrl: sources.tradeMyslinski.url,
+        confidence: "medium",
+        description: "Po opanowaniu Rusi wzrosło znaczenie drogi handlowej łączącej Kraków, Sandomierz, Lublin i Lwów.",
+        coordinates: [[50.0614, 19.9366], [50.6827, 21.7489], [51.2465, 22.5684], [51.1335, 23.4712], [49.8397, 24.0297]]
+      },
+      {
+        id: "wroclaw-rus",
+        name: "Kierunek Wrocław - Kraków - Ruś",
+        layer: "trade",
+        yearStart: 1349,
+        yearEnd: 1370,
+        sourceTitle: sources.tradeMyslinski.title,
+        sourceUrl: sources.tradeMyslinski.url,
+        confidence: "medium",
+        description: "Opracowania handlu średniowiecznego podkreślają znaczenie relacji Wrocławia z Rusią przez miasta Królestwa.",
+        coordinates: [[51.1079, 17.0385], [50.0614, 19.9366], [50.0121, 22.0056], [49.8397, 24.0297]]
+      },
+      {
+        id: "solny",
+        name: "Oś gospodarki solnej Wieliczka - Bochnia - Kraków",
+        layer: "trade",
+        yearStart: 1368,
+        yearEnd: 1370,
+        sourceTitle: sources.kopalniaStatut.title,
+        sourceUrl: sources.kopalniaStatut.url,
+        confidence: "high",
+        description: "Statut żupny porządkował wydobycie i sprzedaż soli w najważniejszych żupach królewskich.",
+        coordinates: [[49.9871, 20.0648], [49.9691, 20.4303], [50.0614, 19.9366]]
+      }
+    ];
+
+    const eventMapPointOverrides = {
+      "coronation-1333": [1761, 1029],
+      "kazimierz-city-1335": [1761, 1029],
+      "court-krakow-1356": [1761, 1029],
+      "krakow-privileges-1358": [1761, 1029],
+      "uj-1364": [1761, 1029],
+      "krakow-congress-1364": [1761, 1029],
+      "jewish-privilege-1364": [1761, 1029],
+      "grosz-1367": [1761, 1029],
+      "death-1370": [1761, 1029],
+      "wawel-fortress": [1761, 1029],
+      "bedzin-castle": [1683, 913],
+      "lwow-1356": [1829, 1770],
+      "ruthenia-campaign-1340": [1829, 1770]
+    };
+
+    const historicalEvents = [
+      {
+        id: "coronation-1333",
+        title: "Koronacja Kazimierza III",
+        historicalName: "Kraków, Wawel",
+        modernName: "Kraków",
+        category: "wydarzenie polityczne",
+        layer: "politics",
+        yearStart: 1333,
+        yearEnd: 1333,
+        coordinates: [50.054, 19.936],
+        description: "Kazimierz objął tron po Władysławie Łokietku i rozpoczął rządy w Królestwie wymagającym stabilizacji granic.",
+        image: images.portraitKazimierz,
+        imageAuthor: "Jan Matejko / reprodukcja Wikimedia Commons",
+        imageLicense: "Domena publiczna",
+        sourceTitle: sources.zpeBorders.title,
+        sourceUrl: sources.zpeBorders.url,
+        confidence: "high"
+      },
+      {
+        id: "jewish-privilege-1334",
+        title: "Potwierdzenie przywilejów dla Żydów",
+        historicalName: "Królestwo Polskie",
+        modernName: "Kalisz / Kraków jako punkty kontekstu",
+        category: "polityka społeczna",
+        layer: "politics",
+        yearStart: 1334,
+        yearEnd: 1370,
+        coordinates: [51.7611, 18.0910],
+        description: "Kazimierz potwierdził wcześniejsze przywileje ochronne dla ludności żydowskiej, wzmacniając jej prawną pozycję w państwie.",
+        image: "",
+        imageAuthor: "",
+        imageLicense: "",
+        sourceTitle: sources.sztetlPrivileges.title,
+        sourceUrl: sources.sztetlPrivileges.url,
+        confidence: "high"
+      },
+      {
+        id: "kazimierz-city-1335",
+        title: "Lokacja miasta Kazimierza",
+        historicalName: "Kazimierz pod Krakowem",
+        modernName: "Kraków-Kazimierz",
+        category: "miasto",
+        layer: "cities",
+        yearStart: 1335,
+        yearEnd: 1370,
+        coordinates: [50.0515, 19.9475],
+        description: "Król lokował nowe miasto na południe od Krakowa, nadając mu własne imię i ważną rolę gospodarczą.",
+        image: images.kazimierzTownHall,
+        imageAuthor: "Marek Tobolewski / Wikimedia Commons",
+        imageLicense: "GFDL",
+        sourceTitle: sources.kazimierzLokacja.title,
+        sourceUrl: sources.kazimierzLokacja.url,
+        confidence: "high"
+      },
+      {
+        id: "trencin-visegrad-1335",
+        title: "Układy z Luksemburgami i zjazd wyszehradzki",
+        historicalName: "Trenczyn i Wyszehrad",
+        modernName: "Trenčín / Visegrád",
+        category: "dyplomacja",
+        layer: "diplomacy",
+        yearStart: 1335,
+        yearEnd: 1335,
+        coordinates: [47.7856, 18.9700],
+        description: "Rozmowy z udziałem Polski, Czech i Węgier miały ograniczyć spory o koronę polską, Śląsk i sprawy krzyżackie.",
+        image: "",
+        imageAuthor: "",
+        imageLicense: "",
+        sourceTitle: sources.wyszehrad.title,
+        sourceUrl: sources.wyszehrad.url,
+        confidence: "medium"
+      },
+      {
+        id: "sandomierz-court-1336",
+        title: "Sądy prawa niemieckiego w służbie Korony",
+        historicalName: "Sandomierz",
+        modernName: "Sandomierz",
+        category: "administracja",
+        layer: "administration",
+        yearStart: 1336,
+        yearEnd: 1370,
+        coordinates: [50.6827, 21.7489],
+        description: "Rozwój sądów wyższych prawa niemieckiego ograniczał odwołania do ośrodków zagranicznych i wzmacniał królewską kontrolę.",
+        image: "",
+        imageAuthor: "",
+        imageLicense: "",
+        sourceTitle: sources.courtArchive.title,
+        sourceUrl: sources.courtArchive.url,
+        confidence: "medium"
+      },
+      {
+        id: "warsaw-trial-1339",
+        title: "Proces warszawski przeciw Zakonowi",
+        historicalName: "Warszawa",
+        modernName: "Warszawa",
+        category: "dyplomacja",
+        layer: "diplomacy",
+        yearStart: 1339,
+        yearEnd: 1339,
+        coordinates: [52.2297, 21.0122],
+        description: "Proces kanoniczny był częścią starań o odzyskanie ziem zajętych przez Zakon Krzyżacki.",
+        image: "",
+        imageAuthor: "",
+        imageLicense: "",
+        sourceTitle: sources.kaliszDzieje.title,
+        sourceUrl: sources.kaliszDzieje.url,
+        confidence: "high"
+      },
+      {
+        id: "ruthenia-campaign-1340",
+        title: "Początek walk o Ruś Halicką",
+        historicalName: "Lwów",
+        modernName: "Lviv",
+        category: "wydarzenie militarne",
+        layer: "military",
+        yearStart: 1340,
+        yearEnd: 1340,
+        coordinates: [49.8397, 24.0297],
+        description: "Po śmierci Bolesława Jerzego II Kazimierz rozpoczął interwencję w Rusi Halicko-Włodzimierskiej.",
+        image: "",
+        imageAuthor: "",
+        imageLicense: "",
+        sourceTitle: sources.rusZpe.title,
+        sourceUrl: sources.rusZpe.url,
+        confidence: "medium"
+      },
+      {
+        id: "kalisz-peace-1343",
+        title: "Pokój kaliski",
+        historicalName: "Kalisz",
+        modernName: "Kalisz",
+        category: "traktat",
+        layer: "diplomacy",
+        yearStart: 1343,
+        yearEnd: 1343,
+        coordinates: [51.7611, 18.0910],
+        description: "Traktat z Zakonem Krzyżackim przywrócił Królestwu Kujawy i ziemię dobrzyńską, ale sankcjonował utratę Pomorza Gdańskiego.",
+        image: "",
+        imageAuthor: "",
+        imageLicense: "",
+        sourceTitle: sources.kaliszMhp.title,
+        sourceUrl: sources.kaliszMhp.url,
+        confidence: "high"
+      },
+      {
+        id: "bydgoszcz-1346",
+        title: "Lokacja Bydgoszczy",
+        historicalName: "Bydgoszcz / Królewiec",
+        modernName: "Bydgoszcz",
+        category: "miasto",
+        layer: "cities",
+        yearStart: 1346,
+        yearEnd: 1370,
+        coordinates: [53.1235, 18.0084],
+        description: "Kazimierz nadał Bydgoszczy prawa miejskie na prawie magdeburskim, wzmacniając północno-zachodnią część państwa.",
+        image: "",
+        imageAuthor: "",
+        imageLicense: "",
+        sourceTitle: sources.bydgoszcz.title,
+        sourceUrl: sources.bydgoszcz.url,
+        confidence: "high"
+      },
+      {
+        id: "namyslow-1348",
+        title: "Pokój w Namysłowie",
+        historicalName: "Namysłów",
+        modernName: "Namysłów",
+        category: "dyplomacja",
+        layer: "diplomacy",
+        yearStart: 1348,
+        yearEnd: 1348,
+        coordinates: [51.0759, 17.7228],
+        description: "Układ z Karolem IV kończył etap konfliktów z Czechami i utrwalał polityczny status quo wokół Śląska.",
+        image: "",
+        imageAuthor: "",
+        imageLicense: "",
+        sourceTitle: sources.namyslowMhp.title,
+        sourceUrl: sources.namyslowMhp.url,
+        confidence: "high"
+      },
+      {
+        id: "halych-1349",
+        title: "Utrwalenie władzy na Rusi Halickiej",
+        historicalName: "Halicz",
+        modernName: "Halych",
+        category: "wydarzenie militarne",
+        layer: "military",
+        yearStart: 1349,
+        yearEnd: 1349,
+        coordinates: [49.1247, 24.7284],
+        description: "Wyprawa z 1349 r. wzmocniła kontrolę Kazimierza nad zasadniczą częścią Rusi Halickiej.",
+        image: "",
+        imageAuthor: "",
+        imageLicense: "",
+        sourceTitle: sources.rusZpe.title,
+        sourceUrl: sources.rusZpe.url,
+        confidence: "medium"
+      },
+      {
+        id: "przemysl-rus",
+        title: "Przemyśl w systemie ruskich ziem Korony",
+        historicalName: "Przemyśl",
+        modernName: "Przemyśl",
+        category: "miasto",
+        layer: "cities",
+        yearStart: 1349,
+        yearEnd: 1370,
+        coordinates: [49.7839, 22.7678],
+        description: "Przemyśl stał się jednym z ważnych punktów zachodniej części ziem ruskich związanych z Królestwem.",
+        image: "",
+        imageAuthor: "",
+        imageLicense: "",
+        sourceTitle: sources.zpeMap.title,
+        sourceUrl: sources.zpeMap.url,
+        confidence: "medium"
+      },
+      {
+        id: "sanok-rus",
+        title: "Sanok na pograniczu karpackim",
+        historicalName: "Sanok",
+        modernName: "Sanok",
+        category: "miasto",
+        layer: "cities",
+        yearStart: 1349,
+        yearEnd: 1370,
+        coordinates: [49.5557, 22.2056],
+        description: "Sanok był ważnym ośrodkiem na południowo-wschodnim pograniczu Królestwa i Rusi.",
+        image: "",
+        imageAuthor: "",
+        imageLicense: "",
+        sourceTitle: sources.zpeMap.title,
+        sourceUrl: sources.zpeMap.url,
+        confidence: "medium"
+      },
+      {
+        id: "lwow-1356",
+        title: "Prawo magdeburskie dla Lwowa",
+        historicalName: "Lwów",
+        modernName: "Lviv",
+        category: "miasto",
+        layer: "cities",
+        yearStart: 1356,
+        yearEnd: 1370,
+        coordinates: [49.8397, 24.0297],
+        description: "Kazimierz nadał Lwowowi prawo magdeburskie, wzmacniając miejski samorząd i znaczenie miasta na Rusi.",
+        image: "",
+        imageAuthor: "",
+        imageLicense: "",
+        sourceTitle: sources.lvivMhp.title,
+        sourceUrl: sources.lvivMhp.url,
+        confidence: "high"
+      },
+      {
+        id: "court-krakow-1356",
+        title: "Sąd Wyższy Prawa Niemieckiego",
+        historicalName: "Zamek krakowski",
+        modernName: "Wawel, Kraków",
+        category: "administracja",
+        layer: "administration",
+        yearStart: 1356,
+        yearEnd: 1370,
+        coordinates: [50.054, 19.936],
+        description: "Kazimierz powołał instancję, która ograniczała odwołania do Magdeburga i wzmacniała miejscowe sądownictwo.",
+        image: images.wawelEntrance,
+        imageAuthor: "Jongleur100 / Wikimedia Commons",
+        imageLicense: "Domena publiczna",
+        sourceTitle: sources.courtArchive.title,
+        sourceUrl: sources.courtArchive.url,
+        confidence: "high"
+      },
+      {
+        id: "statutes-wislica",
+        title: "Statut wiślicki",
+        historicalName: "Wiślica",
+        modernName: "Wiślica",
+        category: "reforma prawa",
+        layer: "law",
+        yearStart: 1356,
+        yearEnd: 1362,
+        coordinates: [50.3489, 20.6742],
+        description: "Statut dla Małopolski porządkował prawo ziemskie i wzmacniał pisane podstawy sądownictwa.",
+        image: "",
+        imageAuthor: "",
+        imageLicense: "",
+        sourceTitle: sources.uruszczakStatuty.title,
+        sourceUrl: sources.uruszczakStatuty.url,
+        confidence: "medium"
+      },
+      {
+        id: "statutes-piotrkow",
+        title: "Statut piotrkowski",
+        historicalName: "Piotrków",
+        modernName: "Piotrków Trybunalski",
+        category: "reforma prawa",
+        layer: "law",
+        yearStart: 1356,
+        yearEnd: 1362,
+        coordinates: [51.4052, 19.7030],
+        description: "Statut dla Wielkopolski był częścią kazimierzowskiej kodyfikacji prawa ziemskiego.",
+        image: "",
+        imageAuthor: "",
+        imageLicense: "",
+        sourceTitle: sources.zpeStatuty.title,
+        sourceUrl: sources.zpeStatuty.url,
+        confidence: "medium"
+      },
+      {
+        id: "krakow-privileges-1358",
+        title: "Odnowienie przywilejów Krakowa",
+        historicalName: "Kraków",
+        modernName: "Kraków",
+        category: "miasto",
+        layer: "cities",
+        yearStart: 1358,
+        yearEnd: 1370,
+        coordinates: [50.0614, 19.9366],
+        description: "Kazimierz wspierał stołeczny Kraków przywilejami i polityką gospodarczą, jednocześnie rozwijając sąsiednie ośrodki.",
+        image: "",
+        imageAuthor: "",
+        imageLicense: "",
+        sourceTitle: sources.kazimierzLokacja.title,
+        sourceUrl: sources.kazimierzLokacja.url,
+        confidence: "medium"
+      },
+      {
+        id: "bedzin-castle",
+        title: "Zamek w Będzinie",
+        historicalName: "Będzin",
+        modernName: "Będzin",
+        category: "zamek",
+        layer: "castles",
+        yearStart: 1350,
+        yearEnd: 1370,
+        coordinates: [50.3266, 19.1295],
+        description: "Murowany zamek w Będzinie należał do systemu obronnego zachodniej Małopolski i szlaku ku Śląskowi.",
+        image: "",
+        imageAuthor: "",
+        imageLicense: "",
+        sourceTitle: sources.bedzinNid.title,
+        sourceUrl: sources.bedzinNid.url,
+        confidence: "high"
+      },
+      {
+        id: "szydlow-walls",
+        title: "Mury i zamek w Szydłowie",
+        historicalName: "Szydłów",
+        modernName: "Szydłów",
+        category: "fortyfikacje",
+        layer: "fortifications",
+        yearStart: 1350,
+        yearEnd: 1370,
+        coordinates: [50.5916, 21.0062],
+        description: "W połowie XIV wieku Szydłów został otoczony murami, a po 1350 r. powstał zespół zamkowy.",
+        image: "",
+        imageAuthor: "",
+        imageLicense: "",
+        sourceTitle: sources.szydlowNid.title,
+        sourceUrl: sources.szydlowNid.url,
+        confidence: "high"
+      },
+      {
+        id: "niepolomice-castle",
+        title: "Zamek w Niepołomicach",
+        historicalName: "Niepołomice",
+        modernName: "Niepołomice",
+        category: "zamek",
+        layer: "castles",
+        yearStart: 1350,
+        yearEnd: 1370,
+        coordinates: [50.0406, 20.2226],
+        description: "Rezydencja królewska w Niepołomicach została pierwotnie wzniesiona dla Kazimierza Wielkiego.",
+        image: "",
+        imageAuthor: "",
+        imageLicense: "",
+        sourceTitle: sources.niepolomiceNid.title,
+        sourceUrl: sources.niepolomiceNid.url,
+        confidence: "high"
+      },
+      {
+        id: "uj-1364",
+        title: "Założenie Studium Generale",
+        historicalName: "Studium Generale w Krakowie",
+        modernName: "Uniwersytet Jagielloński, Kraków",
+        category: "edukacja",
+        layer: "education",
+        yearStart: 1364,
+        yearEnd: 1370,
+        coordinates: [50.0617, 19.9345],
+        description: "12 maja 1364 r. Kazimierz ufundował w Krakowie Studium Generale, pierwszą polską uczelnię wyższą.",
+        image: "",
+        imageAuthor: "",
+        imageLicense: "",
+        sourceTitle: sources.ujHistoria.title,
+        sourceUrl: sources.ujHistoria.url,
+        confidence: "high"
+      },
+      {
+        id: "krakow-congress-1364",
+        title: "Zjazd monarchów w Krakowie",
+        historicalName: "Kraków",
+        modernName: "Kraków",
+        category: "zjazd monarchów",
+        layer: "meetings",
+        yearStart: 1364,
+        yearEnd: 1364,
+        coordinates: [50.0614, 19.9366],
+        description: "We wrześniu 1364 r. Kraków gościł europejskich władców, co pokazywało międzynarodowe znaczenie Królestwa.",
+        image: images.wawelEntrance,
+        imageAuthor: "Jongleur100 / Wikimedia Commons",
+        imageLicense: "Domena publiczna",
+        sourceTitle: sources.krakowMeet.title,
+        sourceUrl: sources.krakowMeet.url,
+        confidence: "medium"
+      },
+      {
+        id: "jewish-privilege-1364",
+        title: "Przywileje żydowskie w całym Królestwie",
+        historicalName: "Królestwo Polskie",
+        modernName: "Kraków jako punkt kontekstu",
+        category: "polityka społeczna",
+        layer: "politics",
+        yearStart: 1364,
+        yearEnd: 1370,
+        coordinates: [50.0614, 19.9366],
+        description: "Przywileje potwierdzały ochronę prawną ludności żydowskiej i poddanie jej szczególnej jurysdykcji władzy królewskiej.",
+        image: "",
+        imageAuthor: "",
+        imageLicense: "",
+        sourceTitle: sources.polinHistory.title,
+        sourceUrl: sources.polinHistory.url,
+        confidence: "medium"
+      },
+      {
+        id: "ruthenia-1366",
+        title: "Kolejny etap regulacji ziem ruskich",
+        historicalName: "Chełm, Bełz, Włodzimierz",
+        modernName: "Chełm / Belz / Volodymyr",
+        category: "polityka wschodnia",
+        layer: "politics",
+        yearStart: 1366,
+        yearEnd: 1366,
+        coordinates: [50.7472, 23.2586],
+        description: "Po walkach i układach z Litwą część ziem pogranicznych znalazła się w zależności od Królestwa lub w strefie sporu.",
+        image: "",
+        imageAuthor: "",
+        imageLicense: "",
+        sourceTitle: sources.zpeMap.title,
+        sourceUrl: sources.zpeMap.url,
+        confidence: "medium"
+      },
+      {
+        id: "kleparz-1366",
+        title: "Rozwój Kleparza",
+        historicalName: "Florencja / Kleparz",
+        modernName: "Kraków-Kleparz",
+        category: "miasto",
+        layer: "cities",
+        yearStart: 1366,
+        yearEnd: 1370,
+        coordinates: [50.0692, 19.9406],
+        description: "Kleparz był jednym z ośrodków rozwijanych w sąsiedztwie Krakowa w ramach królewskiej polityki miejskiej.",
+        image: "",
+        imageAuthor: "",
+        imageLicense: "",
+        sourceTitle: sources.kazimierzLokacja.title,
+        sourceUrl: sources.kazimierzLokacja.url,
+        confidence: "medium"
+      },
+      {
+        id: "grosz-1367",
+        title: "Grosz krakowski",
+        historicalName: "Kraków",
+        modernName: "Kraków",
+        category: "gospodarka i moneta",
+        layer: "economy",
+        yearStart: 1367,
+        yearEnd: 1370,
+        coordinates: [50.0614, 19.9366],
+        description: "Około 1367 r. wprowadzono grosz krakowski, rodzimą grubszą monetę srebrną wzorowaną na groszu praskim.",
+        image: images.groszKrakowski,
+        imageAuthor: "Wikimedia Commons",
+        imageLicense: "CC BY-SA 4.0",
+        sourceTitle: sources.nbpGrosz.title,
+        sourceUrl: sources.nbpGrosz.url,
+        confidence: "high"
+      },
+      {
+        id: "salt-statute-1368",
+        title: "Statut Żup Krakowskich",
+        historicalName: "Wieliczka i Bochnia",
+        modernName: "Wieliczka / Bochnia",
+        category: "gospodarka",
+        layer: "economy",
+        yearStart: 1368,
+        yearEnd: 1370,
+        coordinates: [49.9871, 20.0648],
+        description: "Statut z 1368 r. porządkował wydobycie i sprzedaż soli w żupach wielicko-bocheńskich.",
+        image: "",
+        imageAuthor: "",
+        imageLicense: "",
+        sourceTitle: sources.kopalniaStatut.title,
+        sourceUrl: sources.kopalniaStatut.url,
+        confidence: "high"
+      },
+      {
+        id: "bochnia-salt",
+        title: "Bochnia w gospodarce solnej",
+        historicalName: "Bochnia",
+        modernName: "Bochnia",
+        category: "gospodarka",
+        layer: "economy",
+        yearStart: 1368,
+        yearEnd: 1370,
+        coordinates: [49.9691, 20.4303],
+        description: "Bochnia była drugim filarem krakowskich żup solnych objętych regulacją statutu żupnego.",
+        image: "",
+        imageAuthor: "",
+        imageLicense: "",
+        sourceTitle: sources.kopalniaStatut.title,
+        sourceUrl: sources.kopalniaStatut.url,
+        confidence: "high"
+      },
+      {
+        id: "death-1370",
+        title: "Śmierć Kazimierza III Wielkiego",
+        historicalName: "Kraków",
+        modernName: "Kraków",
+        category: "wydarzenie polityczne",
+        layer: "politics",
+        yearStart: 1370,
+        yearEnd: 1370,
+        coordinates: [50.054, 19.936],
+        description: "Śmierć Kazimierza zakończyła panowanie Piastów na tronie polskim i otworzyła sukcesję andegaweńską.",
+        image: images.portraitKazimierz,
+        imageAuthor: "Jan Matejko / reprodukcja Wikimedia Commons",
+        imageLicense: "Domena publiczna",
+        sourceTitle: sources.budaZpe.title,
+        sourceUrl: sources.budaZpe.url,
+        confidence: "high"
+      },
+      {
+        id: "wawel-fortress",
+        title: "Wawel jako centrum władzy",
+        historicalName: "Zamek krakowski",
+        modernName: "Wawel, Kraków",
+        category: "fundacja królewska",
+        layer: "foundations",
+        yearStart: 1333,
+        yearEnd: 1370,
+        coordinates: [50.054, 19.936],
+        description: "Krakowski zamek był centrum władzy królewskiej, kancelarii i ważnych decyzji administracyjnych.",
+        image: images.wawelEntrance,
+        imageAuthor: "Jongleur100 / Wikimedia Commons",
+        imageLicense: "Domena publiczna",
+        sourceTitle: sources.courtArchive.title,
+        sourceUrl: sources.courtArchive.url,
+        confidence: "medium"
+      },
+      {
+        id: "lublin-castle",
+        title: "Lublin na szlaku ku Rusi",
+        historicalName: "Lublin",
+        modernName: "Lublin",
+        category: "zamek i miasto",
+        layer: "castles",
+        yearStart: 1349,
+        yearEnd: 1370,
+        coordinates: [51.2465, 22.5684],
+        description: "Lublin zyskał znaczenie jako punkt na drodze z Małopolski ku Rusi i jako ośrodek administracyjno-obronny.",
+        image: "",
+        imageAuthor: "",
+        imageLicense: "",
+        sourceTitle: sources.tradeMyslinski.title,
+        sourceUrl: sources.tradeMyslinski.url,
+        confidence: "medium"
+      }
+    ];
+
+    const mapState = {
+      currentYear: START_YEAR,
+      selectedLayers: new Set(Object.keys(layersConfig)),
+      playback: null,
+      tileErrorShown: false
+    };
+
+    const layerGroups = {};
+    let map;
+    let historicalBackgroundOverlay;
+
+    function init() {
+      if (typeof L === "undefined") {
+        document.getElementById("libraryError").classList.add("is-visible");
+        return;
+      }
+
+      buildLayerControls();
+      initMap();
+      wireControls();
+      updateMap();
+      updateTimelineUi();
+      scheduleMapRefresh({ fit: true });
+
+      if (window.lucide) {
+        window.lucide.createIcons();
+      }
+    }
+
+    function initMap() {
+      map = L.map("map", {
+        crs: L.CRS.Simple,
+        center: [MAP_IMAGE_SIZE.height * 0.5, MAP_IMAGE_SIZE.width * 0.5],
+        zoom: -1,
+        minZoom: -2.5,
+        maxZoom: 2.5,
+        zoomSnap: 0.25,
+        zoomDelta: 0.5,
+        zoomControl: true,
+        attributionControl: false,
+        preferCanvas: false
+      });
+
+      map.setMaxBounds([[-180, -180], [MAP_IMAGE_SIZE.height + 180, MAP_IMAGE_SIZE.width + 180]]);
+      map.options.maxBoundsViscosity = 0.9;
+
+      map.createPane("historicalImagePane");
+      map.getPane("historicalImagePane").style.zIndex = 180;
+
+      map.createPane("territoryPane");
+      map.getPane("territoryPane").style.zIndex = 420;
+
+      map.createPane("borderPane");
+      map.getPane("borderPane").style.zIndex = 440;
+
+      map.createPane("routePane");
+      map.getPane("routePane").style.zIndex = 450;
+
+      Object.keys(layersConfig).forEach((key) => {
+        layerGroups[key] = L.layerGroup().addTo(map);
+      });
+
+      window.addEventListener("load", () => scheduleMapRefresh({ fit: true }));
+      window.addEventListener("resize", () => scheduleMapRefresh({ fit: true }));
+    }
+
+    function buildLayerControls() {
+      const quick = document.getElementById("quickFilters");
+      quickFilters.forEach((filter) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = filter.label;
+        button.addEventListener("click", () => {
+          mapState.selectedLayers = new Set(filter.layers);
+          syncLayerCheckboxes();
+          updateMap();
+        });
+        quick.appendChild(button);
+      });
+
+      const list = document.getElementById("layerList");
+      Object.entries(layersConfig).forEach(([key, config]) => {
+        const label = document.createElement("label");
+        label.className = "layer-item";
+
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = true;
+        checkbox.dataset.layer = key;
+        checkbox.addEventListener("change", () => {
+          if (checkbox.checked) {
+            mapState.selectedLayers.add(key);
+          } else {
+            mapState.selectedLayers.delete(key);
+          }
+          updateMap();
+        });
+
+        const symbol = document.createElement("span");
+        symbol.className = "layer-symbol";
+        symbol.textContent = config.symbol;
+        symbol.style.backgroundColor = config.color;
+
+        const text = document.createElement("span");
+        text.textContent = config.label;
+
+        label.append(checkbox, symbol, text);
+        list.appendChild(label);
+      });
+    }
+
+    function syncLayerCheckboxes() {
+      document.querySelectorAll("[data-layer]").forEach((checkbox) => {
+        checkbox.checked = mapState.selectedLayers.has(checkbox.dataset.layer);
+      });
+    }
+
+    function wireControls() {
+      document.getElementById("yearSlider").addEventListener("input", (event) => {
+        setYear(Number(event.target.value));
+      });
+
+      document.getElementById("prevButton").addEventListener("click", () => {
+        setYear(Math.max(START_YEAR, mapState.currentYear - 1));
+      });
+
+      document.getElementById("nextButton").addEventListener("click", () => {
+        setYear(Math.min(END_YEAR, mapState.currentYear + 1));
+      });
+
+      document.getElementById("startButton").addEventListener("click", () => {
+        setYear(START_YEAR);
+      });
+
+      document.getElementById("endButton").addEventListener("click", () => {
+        setYear(END_YEAR);
+      });
+
+      document.getElementById("playButton").addEventListener("click", togglePlayback);
+
+      document.addEventListener("keydown", (event) => {
+        if (event.target && ["INPUT", "BUTTON", "SUMMARY"].includes(event.target.tagName)) {
+          return;
+        }
+        if (event.key === "ArrowLeft") {
+          setYear(Math.max(START_YEAR, mapState.currentYear - 1));
+        }
+        if (event.key === "ArrowRight") {
+          setYear(Math.min(END_YEAR, mapState.currentYear + 1));
+        }
+      });
+    }
+
+    function setYear(year) {
+      const bounded = Math.max(START_YEAR, Math.min(END_YEAR, year));
+      mapState.currentYear = bounded;
+      updateTimelineUi();
+      updateMap();
+      scheduleMapRefresh();
+    }
+
+    function updateTimelineUi() {
+      const yearText = String(mapState.currentYear);
+      document.getElementById("yearDisplay").textContent = yearText;
+      document.getElementById("yearSlider").value = yearText;
+      const border = getBorderForYear(mapState.currentYear);
+      document.getElementById("currentState").textContent = border.label;
+    }
+
+    function togglePlayback() {
+      if (mapState.playback) {
+        stopPlayback();
+        return;
+      }
+
+      document.getElementById("playText").textContent = "Pauza";
+      setPlayIcon("pause");
+
+      mapState.playback = window.setInterval(() => {
+        if (mapState.currentYear >= END_YEAR) {
+          setYear(START_YEAR);
+        } else {
+          setYear(mapState.currentYear + 1);
+        }
+      }, 950);
+    }
+
+    function stopPlayback() {
+      if (mapState.playback) {
+        window.clearInterval(mapState.playback);
+        mapState.playback = null;
+      }
+      document.getElementById("playText").textContent = "Odtwórz";
+      setPlayIcon("play");
+    }
+
+    function setPlayIcon(name) {
+      const icon = document.querySelector("#playButton [data-lucide]");
+      if (!icon) return;
+      icon.setAttribute("data-lucide", name);
+      if (window.lucide) {
+        window.lucide.createIcons();
+      }
+    }
+
+    function getBorderForYear(year) {
+      return bordersByYear[getActiveBorderYear(year)];
+    }
+
+    function getActiveBorderYear(year) {
+      const years = Object.keys(bordersByYear).map(Number).sort((a, b) => a - b);
+      let active = years[0];
+      years.forEach((candidate) => {
+        if (candidate <= year) active = candidate;
+      });
+      return active;
+    }
+
+    function getPolandAreaPixelPathsForYear(year) {
+      const activeYear = getActiveBorderYear(year);
+      if (!polandAreaPathCache.has(activeYear)) {
+        const segmentKeys = polandAreaSegmentsByYear[activeYear] || polandAreaSegmentsByYear[1370];
+        polandAreaPathCache.set(activeYear, segmentKeys.map((key) => decodePixelPath(polandAreaPixelPathSegments[key])));
+      }
+      return polandAreaPathCache.get(activeYear);
+    }
+
+    function decodePixelPath(pathData) {
+      return pathData.trim().split(/\s+/).map((point) => {
+        const [x, y] = point.split(",").map(Number);
+        return [x, y];
+      });
+    }
+
+    function addCurrentPolandAreaToGroup(year, group, pane) {
+      const border = getBorderForYear(year);
+      getPolandAreaPixelPathsForYear(year).forEach((pixelPath) => {
+        L.polygon(pixelPath.map(sourcePixelToMapPoint), {
+          pane,
+          color: "#d3211f",
+          weight: 4,
+          opacity: 0.96,
+          fillColor: "#d3211f",
+          fillOpacity: 0.15,
+          lineCap: "round",
+          lineJoin: "round",
+          className: "current-poland-area"
+        })
+          .bindPopup(buildAreaPopup(
+            "Aktualny zasięg Królestwa Polskiego",
+            border.label,
+            border.sourceTitle,
+            border.sourceUrl,
+            "Obrys i wypełnienie zmieniają się zgodnie z wybranym rokiem."
+          ))
+          .addTo(group);
+      });
+    }
+
+    function updateMap() {
+      Object.values(layerGroups).forEach((group) => group.clearLayers());
+      syncLayerVisibility();
+
+      updateHistoricalBackground(mapState.currentYear);
+
+      if (mapState.selectedLayers.has("borders")) {
+        addCurrentPolandAreaToGroup(mapState.currentYear, layerGroups.borders, "borderPane");
+      }
+
+      tradeRoutes.forEach((route) => {
+        if (!isVisibleInYear(route, mapState.currentYear)) return;
+        if (!mapState.selectedLayers.has(route.layer)) return;
+        L.polyline(route.coordinates.map(projectLatLngToMapPoint), {
+          pane: "routePane",
+          color: layersConfig.trade.color,
+          weight: 3,
+          opacity: 0.8,
+          dashArray: "7 8"
+        })
+          .bindPopup(buildAreaPopup(route.name, route.description, route.sourceTitle, route.sourceUrl, "Przebieg szlaku pokazany orientacyjnie między głównymi ośrodkami."))
+          .addTo(layerGroups.trade);
+      });
+
+      historicalEvents.forEach((event) => {
+        if (!isVisibleInYear(event, mapState.currentYear)) return;
+        if (!mapState.selectedLayers.has(event.layer)) return;
+        createMarker(event).addTo(layerGroups[event.layer]);
+      });
+    }
+
+    function syncLayerVisibility() {
+      Object.keys(layersConfig).forEach((key) => {
+        const group = layerGroups[key];
+        if (mapState.selectedLayers.has(key)) {
+          if (!map.hasLayer(group)) group.addTo(map);
+        } else if (map.hasLayer(group)) {
+          map.removeLayer(group);
+        }
+      });
+    }
+
+    function isVisibleInYear(item, year) {
+      const start = item.yearStart ?? START_YEAR;
+      const end = item.yearEnd ?? item.yearStart ?? END_YEAR;
+      return year >= start && year <= end;
+    }
+
+    function territoryStyle(config, layerKey) {
+      return {
+        color: config.color,
+        weight: layerKey === "disputed" ? 2 : 2.5,
+        opacity: 0.62,
+        dashArray: layerKey === "disputed" ? "7 7" : null,
+        fillColor: config.color,
+        fillOpacity: layerKey === "disputed" ? 0.07 : 0.09
+      };
+    }
+
+    function createMarker(event) {
+      const config = layersConfig[event.layer] || layersConfig.other;
+      const icon = L.divIcon({
+        className: "event-marker",
+        html: `<span>${escapeHtml(config.symbol)}</span>`,
+        iconSize: [26, 26],
+        iconAnchor: [13, 13],
+        popupAnchor: [0, -10]
+      });
+
+      const marker = L.marker(getEventMapPoint(event), {
+        icon,
+        keyboard: true,
+        title: event.title,
+        alt: event.title,
+        pane: "markerPane"
+      }).bindPopup(buildEventPopup(event), { maxWidth: 330 });
+
+      marker.on("add", () => {
+        const element = marker.getElement();
+        if (element) element.style.backgroundColor = config.color;
+      });
+
+      return marker;
+    }
+
+    function getEventMapPoint(event) {
+      const override = eventMapPointOverrides[event.id];
+      return override ? pixelToMapPoint(override) : projectLatLngToMapPoint(event.coordinates);
+    }
+
+    function projectLatLngToMapPoint(coordinates) {
+      const [lat, lng] = coordinates;
+      const x = mapProjection.x[0] * lng + mapProjection.x[1] * lat + mapProjection.x[2];
+      const y = mapProjection.y[0] * lng + mapProjection.y[1] * lat + mapProjection.y[2];
+      return pixelToMapPoint([y, x]);
+    }
+
+    function sourcePixelToMapPoint(pixelPoint) {
+      const [pixelX, pixelY] = pixelPoint;
+      return pixelToMapPoint([pixelY, pixelX]);
+    }
+
+    function pixelToMapPoint(pixelPoint) {
+      const [pixelY, pixelX] = pixelPoint;
+      return [
+        MAP_IMAGE_SIZE.height - clamp(pixelY, 0, MAP_IMAGE_SIZE.height),
+        clamp(pixelX, 0, MAP_IMAGE_SIZE.width)
+      ];
+    }
+
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(max, value));
+    }
+
+    function buildEventPopup(event) {
+      const years = event.yearStart === event.yearEnd ? event.yearStart : `${event.yearStart}-${event.yearEnd}`;
+      const modern = event.modernName && event.modernName !== event.historicalName ? ` (${escapeHtml(event.modernName)})` : "";
+      const hasImage = Boolean(event.image);
+      const media = hasImage
+        ? `<img class="popup-thumb" src="${escapeAttribute(event.image)}" alt="" loading="lazy" onerror="this.replaceWith(createFallbackThumb('${escapeAttribute(layersConfig[event.layer]?.symbol || "•")}'))">`
+        : `<div class="popup-fallback" aria-hidden="true">${escapeHtml(layersConfig[event.layer]?.symbol || "•")}</div>`;
+      const caption = hasImage
+        ? `<div class="popup-caption">${escapeHtml(event.imageAuthor)}<br>${escapeHtml(event.imageLicense)}</div>`
+        : "";
+
+      return `
+        <article class="popup-card">
+          <h2>${escapeHtml(event.title)}</h2>
+          <p class="popup-meta">${escapeHtml(event.historicalName)}${modern} · ${years} · ${escapeHtml(event.category)}</p>
+          <div class="popup-media ${hasImage ? "" : "icon-only-media"}">
+            ${media}
+            ${caption}
+          </div>
+          <p>${escapeHtml(event.description)}</p>
+          <p><a class="popup-source" href="${escapeAttribute(event.sourceUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(event.sourceTitle)}</a></p>
+        </article>
+      `;
+    }
+
+    function buildAreaPopup(title, description, sourceTitle, sourceUrl, note) {
+      return `
+        <article class="popup-card">
+          <h2>${escapeHtml(title)}</h2>
+          <p>${escapeHtml(description)}</p>
+          <p class="popup-meta">${escapeHtml(note || "")}</p>
+          <p><a class="popup-source" href="${escapeAttribute(sourceUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(sourceTitle)}</a></p>
+        </article>
+      `;
+    }
+
+    function updateHistoricalBackground(year) {
+      const nextOverlay = createHistoricalImageOverlay(year, "historicalImagePane", 1);
+      clearHistoricalBackground();
+      historicalBackgroundOverlay = nextOverlay.addTo(map);
+    }
+
+    function clearHistoricalBackground() {
+      if (historicalBackgroundOverlay && map.hasLayer(historicalBackgroundOverlay)) {
+        map.removeLayer(historicalBackgroundOverlay);
+      }
+      historicalBackgroundOverlay = null;
+    }
+
+    function createHistoricalImageOverlay(year, pane, opacity) {
+      const background = getHistoricalBackgroundForYear(year);
+      return L.imageOverlay(background.image, HISTORICAL_IMAGE_BOUNDS, {
+        pane,
+        opacity,
+        interactive: false,
+        alt: background.title
+      });
+    }
+
+    function getHistoricalBackgroundForYear(year) {
+      return historicalMapBackgrounds[getActiveBorderYear(year)] || historicalMapBackgrounds[1333];
+    }
+
+    window.createFallbackThumb = function createFallbackThumb(symbol) {
+      const div = document.createElement("div");
+      div.className = "popup-fallback";
+      div.setAttribute("aria-hidden", "true");
+      div.textContent = symbol || "•";
+      return div;
+    };
+
+    function fitMapToHistoricalView() {
+      if (!map) return;
+      const narrow = window.innerWidth < 900;
+      map.fitBounds(INITIAL_VIEW_BOUNDS, {
+        animate: false,
+        maxZoom: 6,
+        paddingTopLeft: narrow ? [18, 80] : [170, 80],
+        paddingBottomRight: narrow ? [18, 120] : [390, 125]
+      });
+    }
+
+    function scheduleMapRefresh(options = {}) {
+      if (!map) return;
+      const refresh = () => {
+        map.invalidateSize({ pan: false });
+        if (options.fit) {
+          fitMapToHistoricalView();
+        }
+      };
+      window.requestAnimationFrame(refresh);
+      window.setTimeout(refresh, 120);
+      window.setTimeout(refresh, 600);
+    }
+
+    function showStatus(message) {
+      const panel = document.getElementById("statusPanel");
+      panel.textContent = message;
+      panel.classList.add("is-visible");
+      window.setTimeout(() => panel.classList.remove("is-visible"), 5200);
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    function escapeAttribute(value) {
+      return escapeHtml(value).replace(/`/g, "&#096;");
+    }
+
+    window.addEventListener("DOMContentLoaded", init);
+  </script>
+</body>
+</html>
